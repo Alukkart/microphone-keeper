@@ -19,7 +19,8 @@ jobs:
       - name: Download PortAudio DLL
         run: |
           curl -L -o portaudio.zip https://files.portaudio.com/archives/pa_stable_v190700_20210406.zip
-          powershell Expand-Archive portaudio.zip -DestinationPath ./portaudio
+          powershell -Command "Expand-Archive -Path portaudio.zip -DestinationPath ./portaudio"
+          if (!(Test-Path -Path ./portaudio)) { throw 'Extraction failed' }
 
 
       - name: Build Windows EXE
