@@ -22,7 +22,12 @@ var (
 
 func main() {
 	_ = portaudio.Initialize()
-	defer portaudio.Terminate()
+	defer func() {
+		err := portaudio.Terminate()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	a := app.NewWithID("mic.keeper")
 	prefs := a.Preferences()
@@ -30,7 +35,7 @@ func main() {
 	// devices
 	devices, _ := portaudio.Devices()
 	micMap := map[string]*portaudio.DeviceInfo{}
-	micNames := []string{}
+	var micNames []string
 
 	for _, d := range devices {
 		if d.MaxInputChannels > 0 {
@@ -82,7 +87,11 @@ func main() {
 			log.Println(err)
 			return
 		}
-		stream.Start()
+
+		err = stream.Start()
+		if err != nil {
+			return
+		}
 
 		prefs.SetString("mic", selectMic.Selected)
 		prefs.SetString("samplerate", strconv.Itoa(sr))
@@ -93,7 +102,10 @@ func main() {
 
 		go func() {
 			for running {
-				stream.Read()
+				err := stream.Read()
+				if err != nil {
+					return
+				}
 				time.Sleep(10 * time.Millisecond)
 			}
 		}()
@@ -101,8 +113,15 @@ func main() {
 
 	stopBtn := widget.NewButton("Stop", func() {
 		if stream != nil {
-			stream.Stop()
-			stream.Close()
+			err := stream.Stop()
+			if err != nil {
+				return
+			}
+
+			err = stream.Close()
+			if err != nil {
+				return
+			}
 		}
 		running = false
 		status.SetText("Stopped")
@@ -126,7 +145,10 @@ func main() {
 			fyne.NewMenuItem("Hide", func() { w.Hide() }),
 			fyne.NewMenuItem("Quit", func() {
 				if stream != nil {
-					stream.Stop()
+					err := stream.Stop()
+					if err != nil {
+						return
+					}
 				}
 				a.Quit()
 			}),
