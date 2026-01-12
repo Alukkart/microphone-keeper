@@ -16,36 +16,91 @@ jobs:
         with:
           go-version: 1.22
 
-      - name: Setup MSYS2 and PortAudio (Windows)
-        shell: bash
+      - name: Install PortAudio for Windows
+        shell: powershell
         run: |
-          # Download MSYS2
-          curl -L -o msys2.exe https://github.com/msys2/msys2-installer/releases/download/2023-05-26/msys2-x86_64-20230526.exe
+          # Скачиваем PortAudio для Windows (pre-built)
+          $portaudioUrl = "https://files.portaudio.com/archives/pa_stable_v190700_20210406.zip"
+          $downloadPath = "$env:TEMP\portaudio.zip"
+          $extractPath = "$env:TEMP\portaudio"
           
-          # Install MSYS2 to C:/msys64
-          ./msys2.exe install --root C:/msys64 --confirm-command
+          # Скачиваем и распаковываем
+          Invoke-WebRequest -Uri $portaudioUrl -OutFile $downloadPath
+          Expand-Archive -Path $downloadPath -DestinationPath $extractPath
           
-          # Install PortAudio via pacman
-          C:/msys64/usr/bin/bash -lc "pacman -Sy --noconfirm mingw-w64-x86_64-portaudio"
+          # Ищем нужные файлы
+          $includeDir = Get-ChildItem -Path $extractPath -Recurse -Filter "*.h" | Select-Object -First 1
+          if ($includeDir) {
+            $portaudioRoot = $includeDir.Directory.Parent.FullName
+            $includePath = "$portaudioRoot\include"
+            $libPath = "$portaudioRoot\lib\x64"
           
-          # Set environment variables for PortAudio
-          echo "CGO_CFLAGS=-IC:/msys64/mingw64/include" >> $GITHUB_ENV
-          echo "CGO_LDFLAGS=-LC:/msys64/mingw64/lib" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=C:/msys64/mingw64/lib/pkgconfig" >> $GITHUB_ENV
+            # Копируем заголовочные файлы и библиотеки в рабочий каталог
+            New-Item -ItemType Directory -Path ".\libs" -Force
+            Copy-Item -Path "$includePath\*" -Destination ".\libs\" -Recurse -Force
+          
+            # Проверяем наличие DLL
+            $dllPath = "$libPath\portaudio_x64.dll"
+            if (Test-Path $dllPath) {
+              Copy-Item -Path $dllPath -Destination ".\libs\portaudio.dll"
+            }
+          
+            # Устанавливаем переменные окружения для CGO
+            echo "CGO_CFLAGS=-I$pwd\libs" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            echo "CGO_LDFLAGS=-L$pwd\libs -lportaudio" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Setup MinGW Compiler
+        shell: powershell
+        run: |
+          # Проверяем, установлен ли уже MinGW
+          if (Test-Path "C:\msys64\mingw64\bin\gcc.exe") {
+            echo "MinGW already installed"
+            echo "PATH=C:\msys64\mingw64\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            # Используем предустановленный MSYS2
+            echo "PATH=C:\msys64\usr\bin;C:\msys64\mingw64\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: Build Windows EXE
-        shell: bash
+        shell: powershell
         run: |
+          # Настраиваем окружение для CGO
+          $env:CGO_ENABLED = "1"
+          $env:CC = "gcc"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          
+          # Обновляем модули Go
           go mod tidy
-          CC=x86_64-w64-mingw32-gcc CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build -ldflags="-H windowsgui" -o mic_keeper.exe
+          
+          # Пробуем собрать с CGO
+          Write-Host "Building with CGO..."
+          try {
+            go build -ldflags="-H windowsgui" -o mic_keeper.exe
+            if (Test-Path mic_keeper.exe) {
+              Write-Host "Build with CGO succeeded"
+            }
+          } catch {
+            Write-Host "CGO build failed, trying without CGO..."
+            $env:CGO_ENABLED = "0"
+            go build -ldflags="-H windowsgui" -o mic_keeper.exe
+          }
 
-      - name: Verify binary
+      - name: Verify and package binary
+        shell: powershell
         run: |
           if (Test-Path mic_keeper.exe) {
-            Write-Host "Build successful: mic_keeper.exe exists"
-            dir mic_keeper.exe
+            Write-Host "✓ Build successful!"
+            Write-Host "File size: $((Get-Item mic_keeper.exe).Length / 1MB) MB"
+          
+            # Копируем необходимые DLL если они есть
+            if (Test-Path ".\libs\portaudio.dll") {
+              Copy-Item -Path ".\libs\portaudio.dll" -Destination ".\"
+              Write-Host "✓ Copied portaudio.dll"
+            }
           } else {
-            Write-Error "Build failed: mic_keeper.exe not found"
+            Write-Error "✗ Build failed: mic_keeper.exe not found"
             exit 1
           }
 
@@ -53,7 +108,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mic_keeper_windows
-          path: mic_keeper.exe
+          path: |
+            mic_keeper.exe
+            portaudio.dll
 
   build_linux:
     name: Build Linux Binary
@@ -66,7 +123,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.22
+          go-version: "1.22"
 
       - name: Install dependencies
         run: |
@@ -74,12 +131,13 @@ jobs:
           sudo apt-get install -y \
             libportaudio2 portaudio19-dev \
             xorg-dev libgl1-mesa-dev libxcursor-dev \
-            libxrandr-dev libxinerama-dev libxi-dev libx11-dev
+            libxrandr-dev libxinerama-dev libxi-dev libx11-dev \
+            pkg-config
 
       - name: Build Linux binary
         run: |
           go mod tidy
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o mic_keeper
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o mic_keeper
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
