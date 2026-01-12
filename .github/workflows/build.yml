@@ -20,7 +20,7 @@ jobs:
         shell: powershell
         run: |
           # Скачиваем PortAudio для Windows (pre-built)
-          $portaudioUrl = "https://files.portaudio.com/archives/pa_stable_v190700_20210406.zip"
+          $portaudioUrl = "https://files.portaudio.com/archives/portaudio_v18_1.zip"
           $downloadPath = "$env:TEMP\portaudio.zip"
           $extractPath = "$env:TEMP\portaudio"
           
