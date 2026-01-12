@@ -18,6 +18,7 @@ var (
 	stream      *portaudio.Stream
 	running     bool
 	activityLed *widget.Label
+	mainWindow  fyne.Window // Добавляем глобальную переменную для окна
 )
 
 func main() {
@@ -45,6 +46,7 @@ func main() {
 	}
 
 	w := a.NewWindow("Microphone Keeper")
+	mainWindow = w // Сохраняем ссылку на окно
 
 	status := widget.NewLabel("Idle")
 	activityLed = widget.NewLabel("○ Inactive")
@@ -141,8 +143,12 @@ func main() {
 	// ---- System Tray ----
 	if desk, ok := a.(desktop.App); ok {
 		menu := fyne.NewMenu("MicKeeper",
-			fyne.NewMenuItem("Show", func() { w.Show() }),
-			fyne.NewMenuItem("Hide", func() { w.Hide() }),
+			fyne.NewMenuItem("Show", func() {
+				w.Show() // Просто показываем окно
+			}),
+			fyne.NewMenuItem("Hide", func() {
+				w.Hide() // Просто скрываем окно
+			}),
 			fyne.NewMenuItem("Quit", func() {
 				if stream != nil {
 					err := stream.Stop()
@@ -154,7 +160,13 @@ func main() {
 			}),
 		)
 		desk.SetSystemTrayMenu(menu)
+
+		// Обработка закрытия окна - скрываем вместо закрытия
+		w.SetCloseIntercept(func() {
+			w.Hide() // Скрываем окно при нажатии на крестик
+		})
 	}
+
 	w.Resize(fyne.NewSize(600, 500))
 	w.ShowAndRun()
 }
